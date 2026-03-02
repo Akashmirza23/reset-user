@@ -1,0 +1,60 @@
+from flask import Flask, render_template_string, request, flash, redirect
+import requests
+
+app = Flask(__name__)
+app.secret_key = "secret_key_for_flash"
+
+# --- MIKROTIK CONFIGURATION ---
+ROUTER_IP = "192.168.88.1"
+API_USER = "admin"
+API_PASS = "your_password"
+BASE_URL = f"https://{ROUTER_IP}/rest"
+
+# --- HTML TEMPLATE ---
+LOGIN_HTML = """
+<!DOCTYPE html>
+<html>
+<head><title>Hotspot Reset Portal</title></head>
+<body>
+    <h2>Reset Your Session</h2>
+    <p>Use this tool if you cannot log in with a new device.</p>
+    <form method="POST">
+        <input type="text" name="username" placeholder="Hotspot Username" required><br><br>
+        <button type="submit">Reset My Device Lock</button>
+    </form>
+    {% with messages = get_flashed_messages() %}{% if messages %}
+        <p style="color: blue;">{{ messages[0] }}</p>
+    {% endif %}{% endwith %}
+</body>
+</html>
+"""
+
+@app.route('/', methods=['GET', 'POST'])
+def reset_portal():
+    if request.method == 'POST':
+        target = request.form.get('username')
+        auth = (API_USER, API_PASS)
+        
+        try:
+            # 1. Reset MAC Address
+            requests.patch(f"{BASE_URL}/ip/hotspot/user/{target}", 
+                           json={"mac-address": ""}, auth=auth, verify=False)
+            
+            # 2. Clear Active Sessions
+            active = requests.get(f"{BASE_URL}/ip/hotspot/active?user={target}", auth=auth, verify=False).json()
+            for item in active:
+                requests.delete(f"{BASE_URL}/ip/hotspot/active/{item['.id']}", auth=auth, verify=False)
+                
+            # 3. Clear Cookies
+            cookies = requests.get(f"{BASE_URL}/ip/hotspot/cookie?user={target}", auth=auth, verify=False).json()
+            for cookie in cookies:
+                requests.delete(f"{BASE_URL}/ip/hotspot/cookie/{cookie['.id']}", auth=auth, verify=False)
+
+            flash(f"Success! User {target} reset. You can now log in from any device.")
+        except Exception as e:
+            flash(f"Error connecting to router: {str(e)}")
+            
+    return render_template_string(LOGIN_HTML)
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=80)
