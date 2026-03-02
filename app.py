@@ -1,60 +1,51 @@
-from flask import Flask, render_template_string, request, flash, redirect
+from flask import Flask, render_template_string, request, flash
 import requests
 
 app = Flask(__name__)
-app.secret_key = "secret_key_for_flash"
+app.secret_key = "secure_reset_key"
 
-# --- MIKROTIK CONFIGURATION ---
-ROUTER_IP = "192.168.88.1"
-API_USER = "admin"
-API_PASS = "your_password"
+# --- MIKROTIK SETTINGS ---
+ROUTER_IP = "YOUR_ROUTER_PUBLIC_IP"
+AUTH = ("api_user", "your_password")
 BASE_URL = f"https://{ROUTER_IP}/rest"
 
-# --- HTML TEMPLATE ---
-LOGIN_HTML = """
+HTML_PAGE = """
 <!DOCTYPE html>
 <html>
-<head><title>Hotspot Reset Portal</title></head>
+<head><title>Hotspot Self-Reset</title></head>
 <body>
-    <h2>Reset Your Session</h2>
-    <p>Use this tool if you cannot log in with a new device.</p>
+    <h2>Reset Your Hotspot Session</h2>
     <form method="POST">
-        <input type="text" name="username" placeholder="Hotspot Username" required><br><br>
-        <button type="submit">Reset My Device Lock</button>
+        <input type="text" name="user" placeholder="Username" required><br><br>
+        <button type="submit">Reset and Clear Cookies</button>
     </form>
-    {% with messages = get_flashed_messages() %}{% if messages %}
-        <p style="color: blue;">{{ messages[0] }}</p>
-    {% endif %}{% endwith %}
+    {% with msgs = get_flashed_messages() %}{% for m in msgs %}<p>{{m}}</p>{% endfor %}{% endwith %}
 </body>
 </html>
 """
 
 @app.route('/', methods=['GET', 'POST'])
-def reset_portal():
+def reset():
     if request.method == 'POST':
-        target = request.form.get('username')
-        auth = (API_USER, API_PASS)
-        
+        user = request.form.get('user')
         try:
-            # 1. Reset MAC Address
-            requests.patch(f"{BASE_URL}/ip/hotspot/user/{target}", 
-                           json={"mac-address": ""}, auth=auth, verify=False)
+            # 1. Reset MAC Address Lock
+            requests.patch(f"{BASE_URL}/ip/hotspot/user/{user}", json={"mac-address": ""}, auth=AUTH, verify=False)
             
-            # 2. Clear Active Sessions
-            active = requests.get(f"{BASE_URL}/ip/hotspot/active?user={target}", auth=auth, verify=False).json()
-            for item in active:
-                requests.delete(f"{BASE_URL}/ip/hotspot/active/{item['.id']}", auth=auth, verify=False)
-                
-            # 3. Clear Cookies
-            cookies = requests.get(f"{BASE_URL}/ip/hotspot/cookie?user={target}", auth=auth, verify=False).json()
-            for cookie in cookies:
-                requests.delete(f"{BASE_URL}/ip/hotspot/cookie/{cookie['.id']}", auth=auth, verify=False)
+            # 2. Remove Active Session (Disconnect User)
+            active = requests.get(f"{BASE_URL}/ip/hotspot/active?user={user}", auth=AUTH, verify=False).json()
+            for session in active:
+                requests.delete(f"{BASE_URL}/ip/hotspot/active/{session['.id']}", auth=AUTH, verify=False)
 
-            flash(f"Success! User {target} reset. You can now log in from any device.")
+            # 3. Remove MAC Cookies (Prevent Auto-Login)
+            cookies = requests.get(f"{BASE_URL}/ip/hotspot/cookie?user={user}", auth=AUTH, verify=False).json()
+            for c in cookies:
+                requests.delete(f"{BASE_URL}/ip/hotspot/cookie/{c['.id']}", auth=AUTH, verify=False)
+                
+            flash(f"User {user} has been fully reset. Try logging in again.")
         except Exception as e:
-            flash(f"Error connecting to router: {str(e)}")
-            
-    return render_template_string(LOGIN_HTML)
+            flash(f"Connection Error: {str(e)}")
+    return render_template_string(HTML_PAGE)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=80)
